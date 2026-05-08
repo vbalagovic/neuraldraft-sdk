@@ -262,7 +262,7 @@ npx tsx scripts/smoke.ts
 - [Documentation](https://docs.neuraldraft.io)
 - [OpenAPI spec](https://docs.neuraldraft.io/openapi)
 - [MCP server (`@neuraldraft/mcp`)](https://www.npmjs.com/package/@neuraldraft/mcp) — for AI coding tools (Claude Code, Cursor, etc.)
-- [Issues](https://github.com/neuraldraft/neuraldraft/issues)
+- [Issues](https://github.com/vbalagovic/neuraldraft-sdk/issues)
 
 ## License
 
