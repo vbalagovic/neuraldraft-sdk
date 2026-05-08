@@ -1,0 +1,10 @@
+src/
+tests/
+scripts/
+node_modules/
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+.npmignore
+*.tsbuildinfo
+coverage/
