@@ -207,6 +207,45 @@ export interface ImageGenerateInput {
   key?: string;
 }
 
+export interface Image {
+  key: string;
+  url: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ImageReplaceUrlInput {
+  url: string;
+}
+
+export interface ImageReplaceRegenerateInput {
+  regenerate: true;
+  prompt: string;
+  aspect_ratio?: ImageGenerateInput["aspect_ratio"];
+  style?: string;
+}
+
+export type ImageReplaceInput = ImageReplaceUrlInput | ImageReplaceRegenerateInput;
+
+export interface ImageListParams {
+  page?: number;
+  page_size?: number;
+  prefix?: string;
+}
+
+/**
+ * Either a Web `File` / `Blob` (browser, Bun, Node 20+) or a Node `Buffer` /
+ * `Uint8Array`. The SDK transports it as multipart/form-data.
+ */
+export type ImageUploadFile = File | Blob | ArrayBuffer | Uint8Array;
+
+export interface ImageUploadOptions {
+  /** Filename to send to the server. Required for non-File inputs. */
+  filename?: string;
+  /** MIME type. Defaults to `application/octet-stream` if not derivable. */
+  contentType?: string;
+}
+
 // -------------------- Products --------------------
 
 export type ProductStatus = "draft" | "active" | "archived";

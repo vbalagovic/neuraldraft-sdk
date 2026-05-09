@@ -46,7 +46,14 @@ export type {
   Tag,
 
   // Images
+  Image,
   ImageGenerateInput,
+  ImageListParams,
+  ImageReplaceInput,
+  ImageReplaceRegenerateInput,
+  ImageReplaceUrlInput,
+  ImageUploadFile,
+  ImageUploadOptions,
 
   // Products
   Product,

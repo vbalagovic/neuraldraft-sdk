@@ -8,7 +8,12 @@ import type {
   BookingWidgetEmbed,
   BrandContext,
   ContentValue,
+  Image,
   ImageGenerateInput,
+  ImageListParams,
+  ImageReplaceInput,
+  ImageUploadFile,
+  ImageUploadOptions,
   JobReference,
   Paginated,
   Product,
@@ -128,10 +133,15 @@ export class NeuralDraftClient {
       "User-Agent": this.cfg.userAgent,
       ...extraHeaders,
     };
-    let payload: string | undefined;
+    let payload: string | FormData | undefined;
     if (body !== undefined) {
-      payload = JSON.stringify(body);
-      headers["Content-Type"] = "application/json";
+      if (isFormData(body)) {
+        // Let fetch set the Content-Type with the multipart boundary.
+        payload = body;
+      } else {
+        payload = JSON.stringify(body);
+        headers["Content-Type"] = "application/json";
+      }
     }
 
     // Set up an AbortController if a timeout is configured.
@@ -378,14 +388,97 @@ class ImagesResource {
   constructor(private readonly t: Transport) {}
 
   /**
-   * POST /images — kick off async image generation. Returns a
+   * GET /images — paginated list of registered image keys. Optional `prefix`
+   * narrows by user-key prefix (e.g. `hero.` returns `hero.background`,
+   * `hero.foreground`, …).
+   */
+  list(params: ImageListParams = {}): Promise<Paginated<Image>> {
+    return this.t.request<Paginated<Image>>(
+      "GET",
+      `/images${toQuery(params as Record<string, unknown>)}`,
+    );
+  }
+
+  /** GET /images/{key} — resolve a registered image. 404 if not registered. */
+  get(key: string): Promise<Image> {
+    return this.t.request<Image>("GET", `/images/${encodeURIComponent(key)}`);
+  }
+
+  /**
+   * POST /images — kick off async AI generation. Returns a
    * {@link JobReference}; on completion the `result` contains
-   * `{ url, key, width, height }`.
-   *
-   * Costs 40 credits per image.
+   * `{ url, key, width, height }`. Costs ~40 credits per image.
    */
   generate(input: ImageGenerateInput): Promise<JobReference> {
     return this.t.request<JobReference>("POST", "/images", input);
+  }
+
+  /**
+   * PUT /images/{key} — replace by direct URL or regenerate via AI.
+   *
+   * - `{ url }`: synchronous swap, returns the updated {@link Image} (200).
+   * - `{ regenerate: true, prompt, ... }`: returns a {@link JobReference} (202).
+   *
+   * The two shapes are discriminated by the `regenerate` field, so TypeScript
+   * narrows the return type accordingly.
+   */
+  replace(key: string, input: { url: string }): Promise<Image>;
+  replace(
+    key: string,
+    input: {
+      regenerate: true;
+      prompt: string;
+      aspect_ratio?: ImageGenerateInput["aspect_ratio"];
+      style?: string;
+    },
+  ): Promise<JobReference>;
+  replace(key: string, input: ImageReplaceInput): Promise<Image | JobReference> {
+    return this.t.request<Image | JobReference>(
+      "PUT",
+      `/images/${encodeURIComponent(key)}`,
+      input,
+    );
+  }
+
+  /**
+   * POST /images (multipart) — direct file upload. Synchronous, 0 credits.
+   * `key` is required and must match `^[\w.\-\/]+$`. Returns the registered
+   * {@link Image}.
+   *
+   * Pass either a `File`/`Blob` (browser, Bun, Node 20+) or a raw
+   * `Buffer`/`Uint8Array`. For raw buffers, supply `opts.filename` so the
+   * server can derive the extension.
+   */
+  async upload(
+    key: string,
+    file: ImageUploadFile,
+    opts: ImageUploadOptions = {},
+  ): Promise<Image> {
+    const form = buildUploadFormData(key, file, opts);
+    return this.t.request<Image>("POST", "/images", form);
+  }
+
+  /**
+   * PUT /images/{key} (multipart) — replace the image at `key` with uploaded
+   * bytes. Synchronous, 0 credits. Returns the registered {@link Image}.
+   */
+  async replaceFile(
+    key: string,
+    file: ImageUploadFile,
+    opts: ImageUploadOptions = {},
+  ): Promise<Image> {
+    // Build without `key` since the path already encodes it.
+    const form = buildUploadFormData(null, file, opts);
+    return this.t.request<Image>(
+      "PUT",
+      `/images/${encodeURIComponent(key)}`,
+      form,
+    );
+  }
+
+  /** DELETE /images/{key} — remove the registration. 204 on success. */
+  delete(key: string): Promise<void> {
+    return this.t.request<void>("DELETE", `/images/${encodeURIComponent(key)}`);
   }
 }
 
@@ -576,4 +669,61 @@ function isTerminal(job: JobReference): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Detect a `FormData` body so the transport can skip the JSON Content-Type
+ * header (the runtime sets a multipart boundary for us). Works in browsers,
+ * Bun, and Node 20+ where `FormData` is a global.
+ */
+function isFormData(body: unknown): body is FormData {
+  return (
+    typeof FormData !== "undefined" &&
+    body instanceof FormData
+  );
+}
+
+/**
+ * Build a multipart `FormData` payload for image uploads.
+ *
+ * `key` is appended only when the API path lacks it (POST /images creates a
+ * new registration; PUT /images/{key} already encodes it in the URL).
+ *
+ * Caller may pass a `File`/`Blob` (preferred) or a raw `Uint8Array`/`Buffer`.
+ * For raw buffers, `opts.filename` is required so the server can derive the
+ * file extension; otherwise we fall back to `upload.bin`.
+ */
+function buildUploadFormData(
+  key: string | null,
+  file: ImageUploadFile,
+  opts: ImageUploadOptions,
+): FormData {
+  if (typeof FormData === "undefined" || typeof Blob === "undefined") {
+    throw new Error(
+      "FormData / Blob are not available in this runtime. Use Node 20+, Bun, or a browser.",
+    );
+  }
+  const form = new FormData();
+  if (key !== null) form.append("key", key);
+
+  let blob: Blob;
+  let filename = opts.filename;
+
+  if (file instanceof Blob) {
+    // File extends Blob — pick up the name automatically.
+    blob = file;
+    filename = filename ?? (file as File).name ?? "upload.bin";
+  } else if (file instanceof ArrayBuffer || ArrayBuffer.isView(file)) {
+    blob = new Blob([file as ArrayBuffer | Uint8Array], {
+      type: opts.contentType ?? "application/octet-stream",
+    });
+    filename = filename ?? "upload.bin";
+  } else {
+    throw new Error(
+      "images.upload(): `file` must be a File, Blob, ArrayBuffer, or Uint8Array.",
+    );
+  }
+
+  form.append("file", blob, filename);
+  return form;
 }
