@@ -4,6 +4,7 @@ import type {
   BlogPost,
   BlogPostCreateInput,
   BlogPostStatus,
+  BlogPostUpdateInput,
   BookableService,
   BookingWidgetEmbed,
   BrandContext,
@@ -15,6 +16,10 @@ import type {
   ImageUploadFile,
   ImageUploadOptions,
   JobReference,
+  Page,
+  PageCreateInput,
+  PageListParams,
+  PageUpdateInput,
   Paginated,
   Product,
   ProductCreateInput,
@@ -79,6 +84,8 @@ export class NeuralDraftClient {
   readonly components: ComponentsResource;
   /** Blog posts — CRUD plus AI generation. */
   readonly blogPosts: BlogPostsResource;
+  /** Multi-page authoring with per-page SEO meta. */
+  readonly pages: PagesResource;
   /** Brand-consistent image generation. */
   readonly images: ImagesResource;
   /** Products / e-commerce. */
@@ -111,6 +118,7 @@ export class NeuralDraftClient {
     this.content = new ContentResource(transport);
     this.components = new ComponentsResource(transport);
     this.blogPosts = new BlogPostsResource(transport);
+    this.pages = new PagesResource(transport);
     this.images = new ImagesResource(transport);
     this.products = new ProductsResource(transport);
     this.booking = new BookingResource(transport);
@@ -378,6 +386,89 @@ class BlogPostsResource {
     return this.t.request<BlogPost>(
       "GET",
       `/blog-posts/${encodeURIComponent(String(idOrSlug))}${qs}`,
+    );
+  }
+
+  /**
+   * PATCH /blog-posts/{id} — update fields on an existing post. Text fields
+   * (title, content, excerpt, meta_title, meta_description) write to the
+   * matching translation row resolved by `language_code` (default 'en').
+   * Post-level fields (slug, status, category_id, featured_image, tags)
+   * write to the post itself.
+   */
+  update(id: number, input: BlogPostUpdateInput): Promise<BlogPost> {
+    return this.t.request<BlogPost>(
+      "PATCH",
+      `/blog-posts/${encodeURIComponent(String(id))}`,
+      input,
+    );
+  }
+
+  /** DELETE /blog-posts/{id} — hard delete. 204 on success. */
+  delete(id: number): Promise<void> {
+    return this.t.request<void>(
+      "DELETE",
+      `/blog-posts/${encodeURIComponent(String(id))}`,
+    );
+  }
+}
+
+// -------------------- Resource: Pages --------------------
+
+class PagesResource {
+  constructor(private readonly t: Transport) {}
+
+  /**
+   * GET /pages — paginated list of `TenantPage` rows. Filter by `type`
+   * (landing / blog_list / blog_post / legal) or `is_active`. Pages are
+   * ordered with the homepage first, then alphabetically by slug.
+   */
+  list(params: PageListParams = {}): Promise<Paginated<Page>> {
+    return this.t.request<Paginated<Page>>(
+      "GET",
+      `/pages${toQuery(params as Record<string, unknown>)}`,
+    );
+  }
+
+  /** GET /pages/{idOrSlug} — fetch one page by numeric id or slug. */
+  get(idOrSlug: string | number): Promise<Page> {
+    return this.t.request<Page>(
+      "GET",
+      `/pages/${encodeURIComponent(String(idOrSlug))}`,
+    );
+  }
+
+  /**
+   * POST /pages — create a `TenantPage` with optional SEO meta. Promoting
+   * a page to homepage demotes any previously-homepage page. Free; does not
+   * consume credits.
+   */
+  create(input: PageCreateInput): Promise<Page> {
+    return this.t.request<Page>("POST", "/pages", input);
+  }
+
+  /**
+   * PATCH /pages/{id} — merge-semantics update. Only fields you pass are
+   * overwritten — meta keys you omit are preserved. Pass an explicit `null`
+   * to clear a meta field.
+   */
+  update(id: number, input: PageUpdateInput): Promise<Page> {
+    return this.t.request<Page>(
+      "PATCH",
+      `/pages/${encodeURIComponent(String(id))}`,
+      input,
+    );
+  }
+
+  /**
+   * DELETE /pages/{id} — soft-retire (default: sets `is_active=false`) or
+   * hard-delete with `force=true`. Refuses to delete the homepage.
+   */
+  delete(id: number, opts: { force?: boolean } = {}): Promise<void> {
+    const qs = opts.force ? "?force=1" : "";
+    return this.t.request<void>(
+      "DELETE",
+      `/pages/${encodeURIComponent(String(id))}${qs}`,
     );
   }
 }

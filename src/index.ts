@@ -42,8 +42,16 @@ export type {
   BlogPostCreateInput,
   BlogPostStatus,
   BlogPostTranslation,
+  BlogPostUpdateInput,
   Category,
   Tag,
+
+  // Pages
+  Page,
+  PageCreateInput,
+  PageListParams,
+  PageType,
+  PageUpdateInput,
 
   // Images
   Image,

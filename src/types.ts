@@ -175,6 +175,20 @@ export interface BlogPostCreateInput {
   status?: "draft" | "published" | "scheduled";
 }
 
+export interface BlogPostUpdateInput {
+  title?: string;
+  content?: string;
+  excerpt?: string;
+  meta_title?: string | null;
+  meta_description?: string | null;
+  slug?: string;
+  category_id?: number;
+  featured_image?: string;
+  status?: "draft" | "published" | "scheduled";
+  language_code?: string;
+  tags?: number[];
+}
+
 export interface BlogAiInput {
   topic: string;
   style?: string;
@@ -381,4 +395,67 @@ export interface JobReference {
   error?: { code: string; message: string } | null;
   created_at: string;
   updated_at?: string;
+}
+
+// -------------------- Pages --------------------
+
+export type PageType = "landing" | "blog_list" | "blog_post" | "legal";
+
+export interface Page {
+  id: number;
+  slug: string;
+  title: string;
+  type: PageType;
+  is_homepage: boolean;
+  is_active: boolean;
+  exclude_from_search?: boolean;
+  meta_title: string | null;
+  meta_description: string | null;
+  og_title: string | null;
+  og_description: string | null;
+  og_image: string | null;
+  canonical_url: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PageCreateInput {
+  slug: string;
+  title: string;
+  type?: PageType;
+  is_homepage?: boolean;
+  is_active?: boolean;
+  exclude_from_search?: boolean;
+  meta_title?: string;
+  meta_description?: string;
+  og_title?: string;
+  og_description?: string;
+  og_image?: string;
+  canonical_url?: string;
+}
+
+/**
+ * Patch shape — every field is optional. Pass `null` on a meta field to
+ * clear it. Untouched fields are preserved (server merges meta).
+ */
+export interface PageUpdateInput {
+  slug?: string;
+  title?: string;
+  type?: PageType;
+  is_homepage?: boolean;
+  is_active?: boolean;
+  exclude_from_search?: boolean;
+  meta_title?: string | null;
+  meta_description?: string | null;
+  og_title?: string | null;
+  og_description?: string | null;
+  og_image?: string | null;
+  canonical_url?: string | null;
+}
+
+export interface PageListParams {
+  page?: number;
+  page_size?: number;
+  type?: PageType;
+  is_active?: boolean;
 }
