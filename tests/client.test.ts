@@ -127,18 +127,29 @@ describe("NeuralDraftClient", () => {
       expect(v.value).toBe("© 2026");
     });
 
-    it("content.set PUTs the value with both lang and language_code", async () => {
+    it("content.set PUTs exactly {value, lang} (validator's accepted shape)", async () => {
       nock(TEST_API_BASE)
         .put("/content/hero.headline", (body: Record<string, unknown>) =>
           body.value === "Welcome" &&
           body.lang === "en" &&
-          body.language_code === "en" &&
-          body.create_if_missing === true,
+          !("language_code" in body) &&
+          !("create_if_missing" in body),
         )
         .reply(200, { key: "hero.headline", value: "Welcome", lang: "en" });
 
       const c = makeClient();
       await c.content.set("hero.headline", "Welcome", "en");
+    });
+
+    it("content.set forwards scope when provided", async () => {
+      nock(TEST_API_BASE)
+        .put("/content/hero.headline", (body: Record<string, unknown>) =>
+          body.scope === "page",
+        )
+        .reply(200, { key: "hero.headline", value: "Welcome", lang: "en" });
+
+      const c = makeClient();
+      await c.content.set("hero.headline", "Welcome", "en", { scope: "page" });
     });
 
     it("content.bulkCreate treats 409 as skipped_existing without failing the batch", async () => {
@@ -227,10 +238,12 @@ describe("NeuralDraftClient", () => {
   // -------------------- Blog posts --------------------
 
   describe("blogPosts", () => {
-    it("blogPosts.create posts a manual draft", async () => {
+    it("blogPosts.create posts a manual draft with type=manual", async () => {
       nock(TEST_API_BASE)
         .post("/blog-posts", (body: Record<string, unknown>) =>
-          body.title === "Hello" && body.language_code === "en",
+          body.type === "manual" &&
+          body.title === "Hello" &&
+          body.language_code === "en",
         )
         .reply(201, {
           id: 142,
@@ -247,17 +260,13 @@ describe("NeuralDraftClient", () => {
       expect(post.id).toBe(142);
     });
 
-    it("blogPosts.generateAi forwards translate_to as translate_to_languages", async () => {
+    it("blogPosts.generateAi sends type=ai with fields at the top level", async () => {
       nock(TEST_API_BASE)
-        .post("/blog-posts", (body: Record<string, unknown>) => {
-          const ai = body.ai as Record<string, unknown>;
-          return (
-            ai !== undefined &&
-            ai.topic === "morning routines" &&
-            Array.isArray(ai.translate_to_languages) &&
-            (ai.translate_to_languages as string[]).includes("de")
-          );
-        })
+        .post("/blog-posts", (body: Record<string, unknown>) =>
+          body.type === "ai" &&
+          body.topic === "morning routines" &&
+          body.translate_to_all === true,
+        )
         .reply(202, {
           id: "job_de",
           type: "blog_post.generate",
@@ -267,26 +276,27 @@ describe("NeuralDraftClient", () => {
       const c = makeClient();
       const job = await c.blogPosts.generateAi({
         topic: "morning routines",
-        translate_to: ["de", "fr"],
+        translate_to_all: true,
       });
       expect(job.id).toBe("job_de");
       expect(job.status).toBe("pending");
     });
 
-    it("blogPosts.generateAi omits translate_to_languages when none provided", async () => {
+    it("blogPosts.translate POSTs target_languages array", async () => {
       nock(TEST_API_BASE)
-        .post("/blog-posts", (body: Record<string, unknown>) => {
-          const ai = body.ai as Record<string, unknown>;
-          return ai.topic === "x" && !("translate_to_languages" in ai);
-        })
+        .post("/blog-posts/42/translate", (body: Record<string, unknown>) =>
+          Array.isArray(body.target_languages) &&
+          (body.target_languages as string[]).includes("de"),
+        )
         .reply(202, {
-          id: "job_x",
-          type: "blog_post.generate",
+          id: "job_t",
+          type: "translation",
           status: "pending",
           created_at: "2026-04-19T10:00:00Z",
         });
       const c = makeClient();
-      await c.blogPosts.generateAi({ topic: "x" });
+      const job = await c.blogPosts.translate(42, ["de", "fr"]);
+      expect(job.id).toBe("job_t");
     });
 
     it("blogPosts.list returns paginated results", async () => {
@@ -472,8 +482,8 @@ describe("NeuralDraftClient", () => {
           status: "active",
         });
       const c = makeClient();
-      const w = await c.booking.getWidget(12);
-      expect(w.snippet_url).toBe(`${TEST_API_BASE}/widgets/booking/12.js`);
+      const w = await c.booking.getWidget(7, 12);
+      expect(w.snippet_url).toBe(`${TEST_API_BASE}/widgets/booking/7/12.js`);
       expect(w.embed_html).toContain('data-neuraldraft-booking="12"');
       expect(w.service_id).toBe(12);
     });
@@ -481,7 +491,7 @@ describe("NeuralDraftClient", () => {
     it("booking.getWidget surfaces a 404 from the validation read", async () => {
       nock(TEST_API_BASE).get("/bookable-services/9999").reply(404, "not found");
       const c = makeClient();
-      await expect(c.booking.getWidget(9999)).rejects.toMatchObject({
+      await expect(c.booking.getWidget(7, 9999)).rejects.toMatchObject({
         status: 404,
       });
     });
@@ -577,18 +587,80 @@ describe("NeuralDraftClient", () => {
       nock(TEST_API_BASE)
         .get("/projects/me")
         .reply(200, {
-          id: "prj_2NfQmBcKpXY8",
-          name: "Lakeside Yoga",
-          slug: "lakeside-yoga",
-          default_language: "en",
-          target_languages: ["en", "fr"],
-          plan: "hobby",
-          created_at: "2026-02-14T09:31:18Z",
+          data: {
+            id: "prj_2NfQmBcKpXY8",
+            name: "Lakeside Yoga",
+            slug: "lakeside-yoga",
+            default_language: "en",
+            target_languages: ["en", "fr"],
+            plan_type: "creator",
+            credits_balance: 1500,
+            commerce_enabled: true,
+            booking_enabled: true,
+            created_at: "2026-02-14T09:31:18Z",
+            updated_at: "2026-02-14T09:31:18Z",
+          },
         });
       const c = makeClient();
       const p = await c.projects.me();
       expect(p.id).toBe("prj_2NfQmBcKpXY8");
       expect(p.target_languages).toEqual(["en", "fr"]);
+      expect(p.plan_type).toBe("creator");
+    });
+
+    it("projects.update PATCHes editable fields", async () => {
+      nock(TEST_API_BASE)
+        .patch("/projects/me", (body: Record<string, unknown>) =>
+          body.project_name === "New Name",
+        )
+        .reply(200, {
+          data: {
+            id: 1,
+            name: "New Name",
+            slug: "new-name",
+            default_language: "en",
+            target_languages: ["en"],
+            created_at: "2026-02-14T09:31:18Z",
+            updated_at: "2026-02-14T09:31:18Z",
+          },
+        });
+      const c = makeClient();
+      const p = await c.projects.update({ project_name: "New Name" });
+      expect(p.name).toBe("New Name");
+    });
+  });
+
+  // -------------------- Static: tenants for email --------------------
+
+  describe("static.tenantsForEmail", () => {
+    it("hits the central host without an API key", async () => {
+      nock("http://central.test.local")
+        .get("/central/api/tenants-for-email")
+        .query({ email: "user@example.com" })
+        .reply(200, {
+          tenants: [
+            { id: 1, name: "Workspace A", domain: "a.example" },
+            { id: 2, name: "Workspace B", domain: "b.example" },
+          ],
+        });
+
+      const r = await NeuralDraftClient.tenantsForEmail("user@example.com", {
+        centralUrl: "http://central.test.local",
+      });
+      expect(r.tenants).toHaveLength(2);
+      expect(r.tenants[0]?.name).toBe("Workspace A");
+    });
+
+    it("returns an empty list for unknown emails (200)", async () => {
+      nock("http://central.test.local")
+        .get("/central/api/tenants-for-email")
+        .query({ email: "unknown@example.com" })
+        .reply(200, { tenants: [] });
+
+      const r = await NeuralDraftClient.tenantsForEmail("unknown@example.com", {
+        centralUrl: "http://central.test.local",
+      });
+      expect(r.tenants).toEqual([]);
     });
   });
 

@@ -1,11 +1,15 @@
 /**
  * TypeScript types for the Neural Draft Project API v1.
  *
- * Mirrors the schemas defined in the canonical OpenAPI spec at
- * https://github.com/neuraldraft/neuraldraft/blob/main/openapi.yaml.
- * Field optionality follows the spec's `required` arrays — anything the spec
- * marks as nullable is `T | null`; anything not in `required` is `T | undefined`
- * (i.e. an optional property).
+ * These types are derived from the controller validation rules and
+ * `App\Http\Resources\V1\*` transformers — i.e. they reflect the *actual*
+ * runtime contract, not an idealised OpenAPI schema. Keep them in sync
+ * with `app/Http/Controllers/Api/V1/*Controller.php` and
+ * `app/Http/Resources/V1/*Resource.php`.
+ *
+ * Field optionality:
+ *   - Anything the API may omit or send as `null` is `T | null` or `T?`.
+ *   - Anything the controller treats as optional in writes is `T?`.
  */
 
 // -------------------- Pagination --------------------
@@ -14,6 +18,8 @@ export interface PaginationMeta {
   page: number;
   page_size: number;
   total: number;
+  /** Present on most controllers — last page index. */
+  last_page?: number;
 }
 
 export interface Paginated<T> {
@@ -23,18 +29,61 @@ export interface Paginated<T> {
 
 // -------------------- Project --------------------
 
-export type ProjectPlan = "free" | "hobby" | "build" | "scale" | "enterprise";
+/**
+ * Plan identifier returned by the API on `Project.plan_type`. Free-form
+ * (the API has more values internally), but these are the customer-facing
+ * tiers we expose.
+ */
+export type ProjectPlan =
+  | "free"
+  | "starter"
+  | "creator"
+  | "build"
+  | "scale"
+  | "enterprise"
+  | string;
 
 export interface Project {
-  id: string;
+  id: string | number;
   name: string;
-  slug: string;
-  industry?: string | null;
+  slug: string | null;
+  description?: string | null;
+  domain?: string | null;
+  custom_domain?: string | null;
   default_language: string;
   target_languages: string[];
-  timezone?: string;
-  plan: ProjectPlan;
+  plan_type?: ProjectPlan;
+  credits_balance?: number;
+  commerce_enabled?: boolean;
+  booking_enabled?: boolean;
   created_at: string;
+  updated_at?: string;
+}
+
+export interface ProjectUpdateInput {
+  name?: string;
+  project_name?: string;
+  project_slug?: string;
+  project_description?: string | null;
+  default_language?: string;
+  target_languages?: string[];
+  webhook_url?: string | null;
+}
+
+export interface ProjectUsageBreakdownEntry {
+  operation_type: string;
+  total_spent: number;
+  count: number;
+}
+
+export interface ProjectUsage {
+  credits_balance: number;
+  credits_monthly_limit: number;
+  credits_reset_at: string | null;
+  period_start: string;
+  period_end: string;
+  total_spent_this_period: number;
+  breakdown: ProjectUsageBreakdownEntry[];
 }
 
 // -------------------- Brand --------------------
@@ -44,17 +93,23 @@ export interface BrandColor {
   name?: string | null;
 }
 
+/**
+ * The PATCH /v1/brand validator does not constrain `content_tone` to a
+ * fixed set — it is `string|max:100`. The values below are the supported
+ * presets surfaced in the admin UI; the API will accept other strings too.
+ */
 export type BrandContentTone =
   | "friendly_professional"
   | "formal"
   | "playful"
   | "authoritative"
   | "warm"
-  | "witty";
+  | "witty"
+  | string;
 
 export interface BrandFonts {
-  heading?: string;
-  body?: string;
+  heading?: string | null;
+  body?: string | null;
 }
 
 export interface BrandColors {
@@ -69,25 +124,39 @@ export interface BrandLanguage {
   is_default: boolean;
 }
 
+/**
+ * Brand context returned by `GET /v1/brand`. Composed by `BrandController`
+ * from three underlying tables (`TenantHomepage`, `DesignSystem`, `Tenant`).
+ *
+ * `requires_branding_badge` is true on free-tier projects — when set, the
+ * project is required to render `branding_badge_html` in its footer.
+ */
 export interface BrandContext {
   voice?: string | null;
   audience?: string | null;
   content_tone?: BrandContentTone | null;
-  content_goals?: string[] | null;
-  preferred_topics?: string[] | null;
+  content_goals?: string[];
+  preferred_topics?: string[];
   description?: string | null;
   logo_url?: string | null;
-  colors?: BrandColors | null;
-  fonts?: BrandFonts | null;
+  colors?: BrandColors;
+  fonts?: BrandFonts;
+  target_languages?: string[];
+  default_language?: string;
+  requires_branding_badge?: boolean;
+  branding_badge_html?: string | null;
+  /** Not currently emitted by the API; reserved for future expansion. */
   industry?: string | null;
   languages?: BrandLanguage[];
 }
 
 // -------------------- Content --------------------
 
+export type ContentScope = "page" | "component" | "global";
+
 export interface ContentValue {
   key: string;
-  value: string;
+  value: string | null;
   lang: string;
   all_locales?: Record<string, string>;
 }
@@ -100,7 +169,7 @@ export interface TranslationKeyCreateResult {
 // -------------------- Components --------------------
 
 export interface RegisteredComponent {
-  id: string;
+  id: string | number;
   intent?: string | null;
   page_slug?: string | null;
   html: string;
@@ -114,7 +183,15 @@ export interface RegisteredComponent {
 export interface ComponentRegisterInput {
   html: string;
   intent: string;
-  page_slug?: string;
+  page_slug?: string | null;
+  /** Insertion order on the page (0 = first). */
+  position?: number | null;
+}
+
+export interface ComponentUpdateInput {
+  html: string;
+  intent?: string | null;
+  page_slug?: string | null;
 }
 
 // -------------------- Blog --------------------
@@ -161,16 +238,22 @@ export interface BlogPost {
   updated_at?: string;
 }
 
+/**
+ * Manual blog-post create input. The SDK adds `type: "manual"` for you.
+ */
 export interface BlogPostCreateInput {
   title: string;
   slug?: string;
-  content: string;
+  content?: string;
   excerpt?: string;
   meta_title?: string;
   meta_description?: string;
-  language_code: string;
+  language_code?: string;
   category_id?: number;
-  tag_ids?: number[];
+  /**
+   * Existing tag ids. Note the API field is `tags`, not `tag_ids`.
+   */
+  tags?: number[];
   featured_image?: string;
   status?: "draft" | "published" | "scheduled";
 }
@@ -189,33 +272,34 @@ export interface BlogPostUpdateInput {
   tags?: number[];
 }
 
+/**
+ * AI blog-post generation input. The SDK adds `type: "ai"` for you.
+ *
+ * Note: the controller currently only honours `translate_to_all` (boolean) —
+ * there is no per-language list parameter on `POST /blog-posts`. To translate
+ * an existing post to specific languages use `client.blogPosts.translate(id, [..])`.
+ */
 export interface BlogAiInput {
   topic: string;
-  style?: string;
+  style?: "professional" | "casual" | "educational" | "thought_leadership" | "storytelling";
   word_count?: number;
   target_audience?: string;
   primary_keyword?: string;
   secondary_keywords?: string[];
-  /**
-   * ISO codes the AI should also produce localized versions in. The SDK
-   * forwards these to the API as `ai.translate_to_languages`.
-   */
-  translate_to?: string[];
+  /** Auto-translate the result into every target language configured on the project. */
   translate_to_all?: boolean;
   enable_research?: boolean;
-  research_depth?: "shallow" | "normal" | "deep";
-  reference_urls?: string[];
-  image_style?: string;
+  research_depth?: "light" | "standard" | "deep";
+  image_style?: "photo" | "illustration" | "abstract";
   additional_instructions?: string;
-  category_id?: number;
-  tag_ids?: number[];
 }
 
 // -------------------- Images --------------------
 
 export interface ImageGenerateInput {
   prompt: string;
-  aspect_ratio?: "1:1" | "16:9" | "9:16" | "4:5" | "4:3" | "3:2";
+  /** Allowed by the API: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3 */
+  aspect_ratio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "3:2" | "2:3";
   style?: string;
   /** If provided, the resulting image is also addressable as `GET /images/{key}`. */
   key?: string;
@@ -270,6 +354,7 @@ export interface ProductVariant {
   product_id: number;
   name: string;
   sku?: string | null;
+  /** Price in minor units (e.g. cents). */
   price: number;
   stock_quantity?: number | null;
   options?: Record<string, string>;
@@ -283,7 +368,9 @@ export interface Product {
   slug: string;
   description?: string | null;
   short_description?: string | null;
+  /** Price in minor units (e.g. cents). */
   price: number;
+  /** Comparison/list price in minor units (e.g. cents). */
   compare_at_price?: number | null;
   currency: string;
   type?: ProductType;
@@ -307,9 +394,11 @@ export interface ProductCreateInput {
   slug?: string;
   description?: string;
   short_description?: string;
+  /** Price in minor units (e.g. cents). */
   price: number;
+  /** Comparison/list price in minor units (e.g. cents). */
   compare_at_price?: number | null;
-  currency: string;
+  currency?: string;
   type?: ProductType;
   status?: ProductStatus;
   sku?: string;
@@ -334,6 +423,7 @@ export interface BookableService {
   slug: string;
   description?: string | null;
   short_description?: string | null;
+  /** Price in minor units (e.g. cents). */
   price: number;
   currency: string;
   booking_type?: BookingType;
@@ -375,8 +465,13 @@ export type JobType =
   | "social_post.generate"
   | "image.generate"
   | "translation.batch"
+  | "translation"
   | "content_plan.generate"
-  | "website.generate";
+  | "website.generate"
+  | "video.generate"
+  | "post"
+  | "image"
+  | string;
 
 export interface JobStep {
   name: string;
@@ -385,14 +480,14 @@ export interface JobStep {
 }
 
 export interface JobReference {
-  id: string;
+  id: string | number;
   type: JobType;
   status: JobStatus;
   progress?: number;
   message?: string;
   steps?: JobStep[];
   result?: Record<string, unknown> | null;
-  error?: { code: string; message: string } | null;
+  error?: { code: string; message: string } | string | null;
   created_at: string;
   updated_at?: string;
 }
@@ -458,4 +553,49 @@ export interface PageListParams {
   page_size?: number;
   type?: PageType;
   is_active?: boolean;
+}
+
+// -------------------- Webhooks --------------------
+
+/**
+ * The set of event names accepted by `POST /v1/webhook-endpoints` is a
+ * server-side whitelist (`WebhookEndpointController::VALID_EVENTS`). Any
+ * value outside this list will be rejected with a 422 validation error.
+ *
+ * Notably absent: `newsletter.subscribed` and `contact_form.submitted` are
+ * NOT currently delivered as webhooks even though those events fire
+ * internally.
+ */
+export type WebhookEvent =
+  | "blog_post.published"
+  | "blog_post.translated"
+  | "social_post.published"
+  | "social_post.failed"
+  | "order.created"
+  | "order.paid"
+  | "order.fulfilled"
+  | "order.cancelled"
+  | "order.refunded"
+  | "booking.confirmed"
+  | "booking.cancelled"
+  | "booking.completed"
+  | "content.changed"
+  | "image.generated"
+  | "connect.account_updated";
+
+// -------------------- Central / multi-tenant login --------------------
+
+/**
+ * Tenant entry returned by the central `tenants-for-email` lookup — used by
+ * the central-login workspace picker when an email is registered against
+ * more than one project.
+ */
+export interface TenantForEmail {
+  id: string | number;
+  name: string;
+  domain: string | null;
+}
+
+export interface TenantsForEmailResponse {
+  tenants: TenantForEmail[];
 }

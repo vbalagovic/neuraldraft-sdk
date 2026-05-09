@@ -1,6 +1,6 @@
 {
   "name": "@neuraldraft/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Official TypeScript SDK for the Neural Draft Project API — typed helpers for brand, content, blog, images, products, booking, and async jobs.",
   "type": "module",
   "main": "./dist/index.js",

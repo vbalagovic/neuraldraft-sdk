@@ -68,7 +68,7 @@ await nd.brand.update({ colors: { primary: { hex: "#2A4A3C" } } });    // PATCH 
 const v = await nd.content.get("hero.headline", { lang: "fr" });
 console.log(v.value, v.all_locales);
 
-// Upsert a value (creates the key if it doesn't exist)
+// Upsert a value (creates the key if it doesn't exist). Charges 1 credit.
 await nd.content.set("hero.headline", "Welcome", "en");
 
 // Bulk-create translation keys with default values. 409 (key exists) is
@@ -78,6 +78,10 @@ const r = await nd.content.bulkCreate(
   "en",
 );
 console.log(r.created, r.skipped_existing);
+
+// Async translate one key into many target locales. Charges 7 credits per
+// language. Returns a JobReference — poll via nd.jobs.poll(job.id).
+const job = await nd.content.translate("hero.headline", ["fr", "de"]);
 ```
 
 ### `components`
@@ -99,22 +103,25 @@ const one = await nd.components.get("cmp_2Ngd9KqLmRpW");
 ### `blogPosts`
 
 ```ts
-// Manual draft (synchronous, free)
+// Manual draft (synchronous, 0 credits — counts against your post quota)
 const post = await nd.blogPosts.create({
   title: "5-minute breathwork",
   content: "<p>Hi.</p>",
   language_code: "en",
 });
 
-// AI generation (async — returns a Job; costs 400 credits)
+// AI generation (async — returns a Job; costs 60 credits)
 const job = await nd.blogPosts.generateAi({
   topic: "5-minute breathwork for anxious mornings",
   word_count: 1200,
   primary_keyword: "morning breathwork",
-  translate_to: ["fr", "de"],
+  translate_to_all: true,
 });
 const finished = await nd.jobs.poll(job.id);
 console.log("Generated:", finished.result);
+
+// Translate an existing post to additional languages (7 credits per language)
+const tjob = await nd.blogPosts.translate(post.id, ["de", "fr"]);
 
 // Read & list
 const posts = await nd.blogPosts.list({ status: "published", lang: "en" });
@@ -124,7 +131,7 @@ const one = await nd.blogPosts.get("5-minute-breathwork-for-anxious-mornings");
 ### `images`
 
 ```ts
-// Async — costs 40 credits per image
+// Async AI generation — costs 32 credits per image
 const job = await nd.images.generate({
   prompt: "Serene yoga studio at dawn",
   aspect_ratio: "16:9",
@@ -132,6 +139,12 @@ const job = await nd.images.generate({
 });
 const finished = await nd.jobs.poll(job.id);
 const { url, key } = finished.result as { url: string; key: string };
+
+// Synchronous URL swap — 1 credit
+await nd.images.replace("hero.background", { url: "https://cdn.example/img.jpg" });
+
+// Direct file upload (multipart) — 1 credit
+await nd.images.upload("logo", fileOrBlob, { filename: "logo.svg" });
 ```
 
 ### `products`
@@ -155,10 +168,13 @@ await nd.products.update(created.id, { price: 2799 });
 
 ```ts
 const services = await nd.booking.listServices({ status: "active" });
+const svc = await nd.booking.getService(12);
 
 // Resolves an embeddable widget snippet for a service. Throws ApiError(404)
-// if the service id is unknown.
-const widget = await nd.booking.getWidget(12);
+// if the service id is unknown. Both tenant id and service id are required —
+// the widget script lives at /v1/widgets/booking/{tenant_id}/{service_id}.js.
+const me = await nd.projects.me();
+const widget = await nd.booking.getWidget(me.id, 12);
 console.log(widget.embed_html); // <script src="..." async data-neuraldraft-booking="12"></script>
 ```
 
@@ -175,6 +191,23 @@ const finished = await nd.jobs.poll(job.id, {
 });
 if (finished.status === "failed") {
   console.error(finished.error);
+}
+
+// Cancel an in-flight job
+await nd.jobs.cancel(job.id);
+```
+
+### Central login: workspace picker
+
+When an email is registered against more than one workspace, the central
+login form needs to know which one to log into. `NeuralDraftClient.tenantsForEmail`
+hits the central host (`https://app.neuraldraft.io`) without an API key and
+returns the candidate workspaces:
+
+```ts
+const { tenants } = await NeuralDraftClient.tenantsForEmail("user@example.com");
+for (const t of tenants) {
+  console.log(t.id, t.name, t.domain);
 }
 ```
 

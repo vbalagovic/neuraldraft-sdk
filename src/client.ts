@@ -8,6 +8,9 @@ import type {
   BookableService,
   BookingWidgetEmbed,
   BrandContext,
+  ComponentRegisterInput,
+  ComponentUpdateInput,
+  ContentScope,
   ContentValue,
   Image,
   ImageGenerateInput,
@@ -24,11 +27,14 @@ import type {
   Product,
   ProductCreateInput,
   Project,
+  ProjectUpdateInput,
+  ProjectUsage,
   RegisteredComponent,
+  TenantsForEmailResponse,
   TranslationKeyCreateResult,
 } from "./types.js";
 
-const SDK_VERSION = "0.1.0";
+const SDK_VERSION = "0.3.0";
 const DEFAULT_API_URL = "https://api.neuraldraft.io/v1";
 
 /**
@@ -61,8 +67,8 @@ interface ResolvedConfig {
  * Official TypeScript client for the Neural Draft Project API.
  *
  * Methods are grouped into resource namespaces (`brand`, `content`, `blogPosts`,
- * `images`, `products`, `booking`, `components`, `jobs`, `projects`) so the
- * surface mirrors the API tags. All methods are async and may throw
+ * `images`, `products`, `booking`, `components`, `pages`, `jobs`, `projects`)
+ * so the surface mirrors the API tags. All methods are async and may throw
  * {@link ApiError} on non-2xx responses or transport failures.
  *
  * @example Basic usage
@@ -124,6 +130,53 @@ export class NeuralDraftClient {
     this.booking = new BookingResource(transport);
     this.jobs = new JobsResource(transport);
     this.projects = new ProjectsResource(transport);
+  }
+
+  // -------------------- Static helpers (no API key) --------------------
+
+  /**
+   * Look up the workspaces a given email is registered against on the central
+   * login host. Used by the central-login workspace picker when an address
+   * matches more than one project.
+   *
+   * Unlike every other SDK method, this hits the *central* host (e.g.
+   * `https://app.neuraldraft.io`), not the per-project API host, and does
+   * NOT require an API key. The endpoint always returns 200 with a (possibly
+   * empty) `tenants` array — this is intentional, to defeat email enumeration.
+   *
+   * @param email Address to look up.
+   * @param opts.centralUrl Override the central host. Defaults to
+   *   `https://app.neuraldraft.io`.
+   * @param opts.fetch Inject a custom fetch (useful for tests).
+   */
+  static async tenantsForEmail(
+    email: string,
+    opts: { centralUrl?: string; fetch?: typeof fetch } = {},
+  ): Promise<TenantsForEmailResponse> {
+    const base = stripTrailingSlash(opts.centralUrl ?? "https://app.neuraldraft.io");
+    const fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
+    const url = `${base}/central/api/tenants-for-email?email=${encodeURIComponent(email)}`;
+
+    let res: Response;
+    try {
+      res = await fetchImpl(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": `neuraldraft-sdk/${SDK_VERSION}`,
+        },
+      });
+    } catch (err) {
+      throw new ApiError(0, err instanceof Error ? err.message : String(err), "/central/api/tenants-for-email");
+    }
+
+    if (!res.ok) {
+      const text = await safeText(res);
+      throw new ApiError(res.status, text || res.statusText, "/central/api/tenants-for-email");
+    }
+
+    const json = (await res.json()) as TenantsForEmailResponse;
+    return { tenants: json.tenants ?? [] };
   }
 
   // -------------------- Internals --------------------
@@ -243,26 +296,28 @@ class ContentResource {
 
   /**
    * PUT /content/{key} — upsert a value. If the key does not exist it is
-   * created (no separate "create" endpoint exists).
+   * created automatically.
    *
-   * Pass `create_if_missing: false` to require the key already exist (the API
-   * will return 404 otherwise).
+   * Charges 1 credit per call (`content_update`).
+   *
+   * The API accepts exactly `{value, lang?, scope?}`. Unknown fields are
+   * silently dropped by the validator — pass only those documented here.
    */
   async set(
     key: string,
     value: string,
     language: string,
-    opts: { create_if_missing?: boolean } = {},
-  ): Promise<void> {
-    const create_if_missing = opts.create_if_missing !== false;
-    await this.t.request<unknown>("PUT", `/content/${encodeURIComponent(key)}`, {
-      value,
-      // Both `language_code` (legacy) and `lang` (current spec) are accepted;
-      // we send both to maximise compatibility with deployed API versions.
-      language_code: language,
-      lang: language,
-      create_if_missing,
-    });
+    opts: { scope?: ContentScope } = {},
+  ): Promise<ContentValue> {
+    return this.t.request<ContentValue>(
+      "PUT",
+      `/content/${encodeURIComponent(key)}`,
+      {
+        value,
+        lang: language,
+        ...(opts.scope ? { scope: opts.scope } : {}),
+      },
+    );
   }
 
   /**
@@ -270,10 +325,13 @@ class ContentResource {
    *
    * The v1 API has no single bulk endpoint, so this iterates `PUT /content/{key}`.
    * 409 (key exists) is treated as "skipped" rather than failing the batch.
+   *
+   * Charges 1 credit per successfully written key.
    */
   async bulkCreate(
     keys: Record<string, string>,
     language: string = "en",
+    opts: { scope?: ContentScope } = {},
   ): Promise<TranslationKeyCreateResult> {
     const created: string[] = [];
     const skipped_existing: string[] = [];
@@ -282,7 +340,11 @@ class ContentResource {
         await this.t.request<unknown>(
           "PUT",
           `/content/${encodeURIComponent(key)}`,
-          { value, language_code: language, lang: language, create_if_missing: true },
+          {
+            value,
+            lang: language,
+            ...(opts.scope ? { scope: opts.scope } : {}),
+          },
         );
         created.push(key);
       } catch (err) {
@@ -294,6 +356,36 @@ class ContentResource {
       }
     }
     return { created, skipped_existing };
+  }
+
+  /**
+   * POST /content/{key}/translate — async translation of one key into
+   * one or more target locales. Returns a {@link JobReference}; poll via
+   * `client.jobs.poll(job.id)`.
+   *
+   * Charges 7 credits per target language (`translate_language`).
+   */
+  translate(
+    key: string,
+    targetLanguages: string[],
+    opts: { source_lang?: string } = {},
+  ): Promise<JobReference> {
+    return this.t.request<JobReference>(
+      "POST",
+      `/content/${encodeURIComponent(key)}/translate`,
+      {
+        target_langs: targetLanguages,
+        ...(opts.source_lang ? { source_lang: opts.source_lang } : {}),
+      },
+    );
+  }
+
+  /** DELETE /content/{key} — remove the key and every translation. 204 on success. */
+  delete(key: string): Promise<void> {
+    return this.t.request<void>(
+      "DELETE",
+      `/content/${encodeURIComponent(key)}`,
+    );
   }
 }
 
@@ -307,11 +399,7 @@ class ComponentsResource {
    * component. `data-translate` attributes are extracted into content keys;
    * `data-image-key` attributes register image slots.
    */
-  register(input: {
-    html: string;
-    intent: string;
-    page_slug?: string;
-  }): Promise<RegisteredComponent> {
+  register(input: ComponentRegisterInput): Promise<RegisteredComponent> {
     return this.t.request<RegisteredComponent>("POST", "/components/register", input);
   }
 
@@ -326,10 +414,31 @@ class ComponentsResource {
   }
 
   /** GET /components/{id} — read a single component. */
-  get(id: string): Promise<RegisteredComponent> {
+  get(id: string | number): Promise<RegisteredComponent> {
     return this.t.request<RegisteredComponent>(
       "GET",
-      `/components/${encodeURIComponent(id)}`,
+      `/components/${encodeURIComponent(String(id))}`,
+    );
+  }
+
+  /**
+   * PUT /components/{id} — replace a component's HTML. Re-parses the body,
+   * creating any new translation keys; existing-but-unreferenced keys are
+   * left in place (orphaned, not deleted).
+   */
+  update(id: string | number, input: ComponentUpdateInput): Promise<RegisteredComponent> {
+    return this.t.request<RegisteredComponent>(
+      "PUT",
+      `/components/${encodeURIComponent(String(id))}`,
+      input,
+    );
+  }
+
+  /** DELETE /components/{id} — hard delete. 204 on success. */
+  delete(id: string | number): Promise<void> {
+    return this.t.request<void>(
+      "DELETE",
+      `/components/${encodeURIComponent(String(id))}`,
     );
   }
 }
@@ -339,27 +448,27 @@ class ComponentsResource {
 class BlogPostsResource {
   constructor(private readonly t: Transport) {}
 
-  /** POST /blog-posts — create a manual draft (synchronous, 0 credits). */
+  /**
+   * POST /blog-posts (`type: "manual"`) — create a manual draft.
+   * Synchronous, 0 credits (subject to per-plan post-limit quotas).
+   */
   create(input: BlogPostCreateInput): Promise<BlogPost> {
-    return this.t.request<BlogPost>("POST", "/blog-posts", input);
+    return this.t.request<BlogPost>("POST", "/blog-posts", {
+      type: "manual",
+      ...input,
+    });
   }
 
   /**
-   * POST /blog-posts with `{ ai: ... }` — kick off the AI generation
-   * pipeline. Returns a {@link JobReference}; poll it via `client.jobs.poll`.
+   * POST /blog-posts (`type: "ai"`) — kick off the AI generation pipeline.
+   * Returns a {@link JobReference}; poll it via `client.jobs.poll`.
    *
-   * `translate_to` is a SDK convenience — it is forwarded to the API as
-   * `ai.translate_to_languages` to match the request schema.
+   * Charges 60 credits (`blog_post`).
    */
   generateAi(input: BlogAiInput): Promise<JobReference> {
-    const { translate_to, ...rest } = input;
     return this.t.request<JobReference>("POST", "/blog-posts", {
-      ai: {
-        ...rest,
-        ...(translate_to && translate_to.length > 0
-          ? { translate_to_languages: translate_to }
-          : {}),
-      },
+      type: "ai",
+      ...input,
     });
   }
 
@@ -370,8 +479,9 @@ class BlogPostsResource {
       page_size?: number;
       status?: BlogPostStatus;
       lang?: string;
-      category_id?: number;
-      search?: string;
+      category?: string;
+      tag?: string;
+      sort?: "created_at" | "published_at" | "-created_at" | "-published_at";
     } = {},
   ): Promise<Paginated<BlogPost>> {
     return this.t.request<Paginated<BlogPost>>("GET", `/blog-posts${toQuery(params)}`);
@@ -401,6 +511,40 @@ class BlogPostsResource {
       "PATCH",
       `/blog-posts/${encodeURIComponent(String(id))}`,
       input,
+    );
+  }
+
+  /**
+   * POST /blog-posts/{id}/translate — async translate to N target languages.
+   * Returns a {@link JobReference}.
+   *
+   * Charges 7 credits per target language (`translate_language`).
+   */
+  translate(id: number, targetLanguages: string[]): Promise<JobReference> {
+    return this.t.request<JobReference>(
+      "POST",
+      `/blog-posts/${encodeURIComponent(String(id))}/translate`,
+      { target_languages: targetLanguages },
+    );
+  }
+
+  /** POST /blog-posts/{id}/publish — flip status to `published`. */
+  publish(id: number): Promise<{ id: number; status: string; published_at: string | null }> {
+    return this.t.request("POST", `/blog-posts/${encodeURIComponent(String(id))}/publish`);
+  }
+
+  /** POST /blog-posts/{id}/unpublish — revert status to `draft`. */
+  unpublish(id: number): Promise<{ id: number; status: string }> {
+    return this.t.request("POST", `/blog-posts/${encodeURIComponent(String(id))}/unpublish`);
+  }
+
+  /** POST /blog-posts/{id}/schedule — schedule for future publication. */
+  schedule(id: number, scheduledAt: string | Date): Promise<{ id: number; status: string; scheduled_at: string | null }> {
+    const iso = scheduledAt instanceof Date ? scheduledAt.toISOString() : scheduledAt;
+    return this.t.request(
+      "POST",
+      `/blog-posts/${encodeURIComponent(String(id))}/schedule`,
+      { scheduled_at: iso },
     );
   }
 
@@ -440,8 +584,9 @@ class PagesResource {
 
   /**
    * POST /pages — create a `TenantPage` with optional SEO meta. Promoting
-   * a page to homepage demotes any previously-homepage page. Free; does not
-   * consume credits.
+   * a page to homepage demotes any previously-homepage page.
+   *
+   * Charges 1 credit (`page_update`).
    */
   create(input: PageCreateInput): Promise<Page> {
     return this.t.request<Page>("POST", "/pages", input);
@@ -451,6 +596,8 @@ class PagesResource {
    * PATCH /pages/{id} — merge-semantics update. Only fields you pass are
    * overwritten — meta keys you omit are preserved. Pass an explicit `null`
    * to clear a meta field.
+   *
+   * Charges 1 credit (`page_update`).
    */
   update(id: number, input: PageUpdateInput): Promise<Page> {
     return this.t.request<Page>(
@@ -498,7 +645,9 @@ class ImagesResource {
   /**
    * POST /images — kick off async AI generation. Returns a
    * {@link JobReference}; on completion the `result` contains
-   * `{ url, key, width, height }`. Costs ~40 credits per image.
+   * `{ url, key, width, height }`.
+   *
+   * Charges 32 credits per image (`image`).
    */
   generate(input: ImageGenerateInput): Promise<JobReference> {
     return this.t.request<JobReference>("POST", "/images", input);
@@ -508,7 +657,9 @@ class ImagesResource {
    * PUT /images/{key} — replace by direct URL or regenerate via AI.
    *
    * - `{ url }`: synchronous swap, returns the updated {@link Image} (200).
-   * - `{ regenerate: true, prompt, ... }`: returns a {@link JobReference} (202).
+   *   Charges 1 credit (`image_register`).
+   * - `{ regenerate: true, prompt, ... }`: kicks off async AI regeneration,
+   *   returns a {@link JobReference} (202). Charges 32 credits (`image`).
    *
    * The two shapes are discriminated by the `regenerate` field, so TypeScript
    * narrows the return type accordingly.
@@ -532,9 +683,11 @@ class ImagesResource {
   }
 
   /**
-   * POST /images (multipart) — direct file upload. Synchronous, 0 credits.
+   * POST /images (multipart) — direct file upload. Synchronous.
    * `key` is required and must match `^[\w.\-\/]+$`. Returns the registered
    * {@link Image}.
+   *
+   * Charges 1 credit (`image_register`).
    *
    * Pass either a `File`/`Blob` (browser, Bun, Node 20+) or a raw
    * `Buffer`/`Uint8Array`. For raw buffers, supply `opts.filename` so the
@@ -551,7 +704,9 @@ class ImagesResource {
 
   /**
    * PUT /images/{key} (multipart) — replace the image at `key` with uploaded
-   * bytes. Synchronous, 0 credits. Returns the registered {@link Image}.
+   * bytes. Synchronous. Returns the registered {@link Image}.
+   *
+   * Charges 1 credit (`image_register`).
    */
   async replaceFile(
     key: string,
@@ -593,9 +748,12 @@ class ProductsResource {
     return this.t.request<Paginated<Product>>("GET", `/products${toQuery(params)}`);
   }
 
-  /** GET /products/{id}. */
-  get(id: string | number): Promise<Product> {
-    return this.t.request<Product>("GET", `/products/${encodeURIComponent(String(id))}`);
+  /** GET /products/{id_or_slug}. */
+  get(idOrSlug: string | number): Promise<Product> {
+    return this.t.request<Product>(
+      "GET",
+      `/products/${encodeURIComponent(String(idOrSlug))}`,
+    );
   }
 
   /** POST /products. */
@@ -609,6 +767,14 @@ class ProductsResource {
       "PATCH",
       `/products/${encodeURIComponent(String(id))}`,
       patch,
+    );
+  }
+
+  /** DELETE /products/{id} — soft-delete. 204 on success. */
+  delete(id: string | number): Promise<void> {
+    return this.t.request<void>(
+      "DELETE",
+      `/products/${encodeURIComponent(String(id))}`,
     );
   }
 }
@@ -633,21 +799,35 @@ class BookingResource {
     );
   }
 
+  /** GET /bookable-services/{id}. */
+  getService(id: string | number): Promise<BookableService> {
+    return this.t.request<BookableService>(
+      "GET",
+      `/bookable-services/${encodeURIComponent(String(id))}`,
+    );
+  }
+
   /**
    * Resolve the embed snippet for a bookable service.
    *
    * Validates the service exists (so a clean 404 surfaces here rather than
-   * silently returning a broken script tag) and synthesises an HTML snippet
-   * pointing at `/widgets/booking/{id}.js`.
+   * silently returning a broken script tag), then synthesises an HTML
+   * snippet. The widget script lives at
+   * `/v1/widgets/booking/{tenant_id}/{service_id}.js` — both ids are
+   * required, so caller must supply the tenant id (read it from
+   * `client.projects.me()`).
    */
-  async getWidget(serviceId: string | number): Promise<BookingWidgetEmbed> {
+  async getWidget(
+    tenantId: string | number,
+    serviceId: string | number,
+  ): Promise<BookingWidgetEmbed> {
     await this.t.request<unknown>(
       "GET",
       `/bookable-services/${encodeURIComponent(String(serviceId))}`,
     );
     const snippet_url = `${this.t.apiUrl}/widgets/booking/${encodeURIComponent(
-      String(serviceId),
-    )}.js`;
+      String(tenantId),
+    )}/${encodeURIComponent(String(serviceId))}.js`;
     const embed_html = `<script src="${snippet_url}" async data-neuraldraft-booking="${serviceId}"></script>`;
     return { embed_html, snippet_url, service_id: serviceId };
   }
@@ -659,8 +839,13 @@ class JobsResource {
   constructor(private readonly t: Transport) {}
 
   /** GET /jobs/{id} — single status read. */
-  get(id: string): Promise<JobReference> {
-    return this.t.request<JobReference>("GET", `/jobs/${encodeURIComponent(id)}`);
+  get(id: string | number): Promise<JobReference> {
+    return this.t.request<JobReference>("GET", `/jobs/${encodeURIComponent(String(id))}`);
+  }
+
+  /** POST /jobs/{id}/cancel — cancel an in-flight job. Returns the updated job. */
+  cancel(id: string | number): Promise<JobReference> {
+    return this.t.request<JobReference>("POST", `/jobs/${encodeURIComponent(String(id))}/cancel`);
   }
 
   /**
@@ -671,7 +856,7 @@ class JobsResource {
    * @param opts.timeoutMs  Default 5 minutes.
    */
   async poll(
-    id: string,
+    id: string | number,
     opts: { intervalMs?: number; timeoutMs?: number } = {},
   ): Promise<JobReference> {
     const intervalMs = opts.intervalMs ?? 1500;
@@ -706,6 +891,16 @@ class ProjectsResource {
    */
   me(): Promise<Project> {
     return this.t.request<Project>("GET", "/projects/me");
+  }
+
+  /** PATCH /projects/me — update editable project fields. */
+  update(input: ProjectUpdateInput): Promise<Project> {
+    return this.t.request<Project>("PATCH", "/projects/me", input);
+  }
+
+  /** GET /projects/me/usage — credit balance + per-operation breakdown for the current period. */
+  usage(): Promise<ProjectUsage> {
+    return this.t.request<ProjectUsage>("GET", "/projects/me/usage");
   }
 }
 

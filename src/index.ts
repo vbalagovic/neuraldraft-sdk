@@ -19,6 +19,9 @@ export type {
   // Project
   Project,
   ProjectPlan,
+  ProjectUpdateInput,
+  ProjectUsage,
+  ProjectUsageBreakdownEntry,
 
   // Brand
   BrandColor,
@@ -29,11 +32,13 @@ export type {
   BrandLanguage,
 
   // Content
+  ContentScope,
   ContentValue,
   TranslationKeyCreateResult,
 
   // Components
   ComponentRegisterInput,
+  ComponentUpdateInput,
   RegisteredComponent,
 
   // Blog
@@ -81,4 +86,11 @@ export type {
   JobStatus,
   JobStep,
   JobType,
+
+  // Webhooks
+  WebhookEvent,
+
+  // Central / multi-tenant login
+  TenantForEmail,
+  TenantsForEmailResponse,
 } from "./types.js";
