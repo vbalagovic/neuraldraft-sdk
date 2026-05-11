@@ -1,6 +1,6 @@
 {
   "name": "@neuraldraft/sdk",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Official TypeScript SDK for the Neural Draft Project API \u2014 typed helpers for brand, content, blog, images, products, booking, and async jobs.",
   "type": "module",
   "main": "./dist/index.js",
@@ -46,7 +46,7 @@
   "bugs": {
     "url": "https://github.com/vbalagovic/neuraldraft-sdk/issues"
   },
-  "author": "Neural Draft <developers@neuraldraft.io>",
+  "author": "Neural Draft <info@neuraldraft.io>",
   "publishConfig": {
     "access": "public"
   },
