@@ -7,6 +7,14 @@
 
 A small, zero-dependency, typed client over the Neural Draft v1 REST API. Wraps the same auth, pagination, error, and resource conventions documented in the [OpenAPI spec](https://docs.neuraldraft.io/openapi).
 
+## Demo
+
+Five lines of TypeScript: read brand, list products, create a published blog post.
+
+https://github.com/vbalagovic/neuraldraft-sdk/raw/main/assets/demo.mp4
+
+[![SDK demo still](./assets/demo-still.png)](./assets/demo.mp4)
+
 ## Install
 
 ```bash
