@@ -11,9 +11,9 @@ A small, zero-dependency, typed client over the Neural Draft v1 REST API. Wraps 
 
 Five lines of TypeScript: read brand, list products, create a published blog post.
 
-https://github.com/vbalagovic/neuraldraft-sdk/raw/main/assets/demo.mp4
+![SDK demo](./assets/demo.gif)
 
-[![SDK demo still](./assets/demo-still.png)](./assets/demo.mp4)
+[Watch the full MP4 →](./assets/demo.mp4)
 
 ## Install
 
