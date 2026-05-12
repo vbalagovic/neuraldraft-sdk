@@ -1,7 +1,7 @@
 {
   "name": "@neuraldraft/sdk",
-  "version": "0.3.3",
-  "description": "Official TypeScript SDK for the Neural Draft Project API \u2014 typed helpers for brand, content, blog, images, products, booking, and async jobs.",
+  "version": "0.3.4",
+  "description": "Official TypeScript SDK for the Neural Draft Project API \u2014 typed helpers for brand, content, blog, images, galleries, products, booking, and async jobs.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -12,6 +12,10 @@ import type {
   ComponentUpdateInput,
   ContentScope,
   ContentValue,
+  Gallery,
+  GalleryCreateInput,
+  GalleryListParams,
+  GalleryUpdateInput,
   Image,
   ImageGenerateInput,
   ImageListParams,
@@ -92,6 +96,8 @@ export class NeuralDraftClient {
   readonly blogPosts: BlogPostsResource;
   /** Multi-page authoring with per-page SEO meta. */
   readonly pages: PagesResource;
+  /** Named, ordered image collections. */
+  readonly galleries: GalleriesResource;
   /** Brand-consistent image generation. */
   readonly images: ImagesResource;
   /** Products / e-commerce. */
@@ -125,6 +131,7 @@ export class NeuralDraftClient {
     this.components = new ComponentsResource(transport);
     this.blogPosts = new BlogPostsResource(transport);
     this.pages = new PagesResource(transport);
+    this.galleries = new GalleriesResource(transport);
     this.images = new ImagesResource(transport);
     this.products = new ProductsResource(transport);
     this.booking = new BookingResource(transport);
@@ -616,6 +623,65 @@ class PagesResource {
     return this.t.request<void>(
       "DELETE",
       `/pages/${encodeURIComponent(String(id))}${qs}`,
+    );
+  }
+}
+
+// -------------------- Resource: Galleries --------------------
+
+class GalleriesResource {
+  constructor(private readonly t: Transport) {}
+
+  /**
+   * GET /galleries — paginated list of galleries ordered by name.
+   * Each gallery row includes `items_count` so you can show counts
+   * without fetching every item.
+   */
+  list(params: GalleryListParams = {}): Promise<Paginated<Gallery>> {
+    return this.t.request<Paginated<Gallery>>(
+      "GET",
+      `/galleries${toQuery(params as Record<string, unknown>)}`,
+    );
+  }
+
+  /** GET /galleries/{slug} — fetch a single gallery with its full items array. */
+  get(slug: string): Promise<Gallery> {
+    return this.t.request<Gallery>(
+      "GET",
+      `/galleries/${encodeURIComponent(slug)}`,
+    );
+  }
+
+  /**
+   * POST /galleries — create a gallery. Slug is auto-derived from `name`
+   * when omitted, with -2/-3/… suffixed on collision. Items are optional;
+   * start empty and add later via `update`.
+   */
+  create(input: GalleryCreateInput): Promise<Gallery> {
+    return this.t.request<Gallery>("POST", "/galleries", input);
+  }
+
+  /**
+   * PATCH /galleries/{slug} — update name and/or items. `items` is a FULL
+   * REPLACE — to add, remove, or reorder, fetch the current array, mutate,
+   * then send the complete new list. Slug is immutable.
+   */
+  update(slug: string, input: GalleryUpdateInput): Promise<Gallery> {
+    return this.t.request<Gallery>(
+      "PATCH",
+      `/galleries/${encodeURIComponent(slug)}`,
+      input,
+    );
+  }
+
+  /**
+   * DELETE /galleries/{slug} — hard delete. Underlying image URLs are NOT
+   * removed (they live in the images registry / media library).
+   */
+  delete(slug: string): Promise<void> {
+    return this.t.request<void>(
+      "DELETE",
+      `/galleries/${encodeURIComponent(slug)}`,
     );
   }
 }

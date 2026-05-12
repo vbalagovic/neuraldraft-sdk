@@ -58,6 +58,13 @@ export type {
   PageType,
   PageUpdateInput,
 
+  // Galleries
+  Gallery,
+  GalleryCreateInput,
+  GalleryItem,
+  GalleryListParams,
+  GalleryUpdateInput,
+
   // Images
   Image,
   ImageGenerateInput,

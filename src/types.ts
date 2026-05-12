@@ -555,6 +555,52 @@ export interface PageListParams {
   is_active?: boolean;
 }
 
+// -------------------- Galleries --------------------
+
+/**
+ * Named, ordered collection of images. Slug is the stable identifier;
+ * names can change. Items are full-replaced on every update — to add or
+ * reorder, fetch the current `items` array, mutate, then send the whole
+ * new list back. Max 200 items per gallery.
+ */
+export interface GalleryItem {
+  url: string;
+  /** Alt text; `null` when absent. */
+  alt: string | null;
+}
+
+export interface Gallery {
+  slug: string;
+  name: string;
+  items: GalleryItem[];
+  items_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface GalleryCreateInput {
+  name: string;
+  /**
+   * Optional explicit slug. Must match /^[a-z0-9][a-z0-9-]{0,254}$/.
+   * Omit to auto-derive from `name`. On collision the server appends
+   * -2, -3, … to find a free slug.
+   */
+  slug?: string;
+  items?: GalleryItem[];
+}
+
+export interface GalleryUpdateInput {
+  name?: string;
+  /** Full replace of the ordered items list. Max 200 entries. */
+  items?: GalleryItem[];
+}
+
+export interface GalleryListParams {
+  page?: number;
+  /** Items per page (1–100). Default 20. */
+  per_page?: number;
+}
+
 // -------------------- Webhooks --------------------
 
 /**
